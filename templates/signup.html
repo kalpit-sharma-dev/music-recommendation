@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Recommender</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f7f7f7;
+        }
+        .container {
+            text-align: center;
+        }
+        .signup-form input {
+            margin: 10px 0;
+            padding: 10px;
+            width: 200px;
+            font-size: 16px;
+        }
+        .signup-form button {
+            padding: 10px 20px;
+            background-color: #1db954;
+            color: white;
+            border: none;
+            font-size: 16px;
+            cursor: pointer;
+        }
+        .signup-form button:hover {
+            background-color: #1ed760;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sign Up for Music Recommender</h1>
+        <p>Enter your details to sign up and then log in with Spotify.</p>
+        <form class="signup-form" id="signupForm">
+            <input type="email" id="email" placeholder="Email" required>
+            <input type="text" id="name" placeholder="Name" required>
+            <button type="submit">Sign Up</button>
+        </form>
+        <p id="message"></p>
+    </div>
+
+    <script>
+        document.getElementById('signupForm').addEventListener('submit', function(event) {
+            event.preventDefault();
+            
+            const email = document.getElementById('email').value;
+            const name = document.getElementById('name').value;
+            const messageElement = document.getElementById('message');
+            
+            // Send sign-up request
+            fetch('http://localhost:5000/signup', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ email, name })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.auth_url) {
+                    messageElement.innerHTML = `Please <a href="${data.auth_url}" target="_blank">log in with Spotify</a>.`;
+                } else {
+                    messageElement.innerHTML = 'Error: ' + data.error;
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                messageElement.innerHTML = 'Failed to sign up, please try again.';
+            });
+        });
+    </script>
+</body>
+</html>

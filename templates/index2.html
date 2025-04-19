@@ -189,11 +189,14 @@
   <div class="flex flex-col sm:flex-row gap-4 mb-6">
     <button class="login bg-green-500 text-white px-4 py-2 rounded shadow hover:opacity-90" onclick="login()">🔐 Login with Spotify</button>
     <button class="collect bg-blue-500 text-white px-4 py-2 rounded shadow hover:opacity-90" onclick="collectData()">📊 Collect Listening Data</button>
-    <button class="recommend bg-purple-600 text-white px-4 py-2 rounded shadow hover:opacity-90" onclick="getRecommendations()">🤖 Get Recommendations</button>
+    <button class="recommend bg-purple-600 text-white px-4 py-2 rounded shadow hover:opacity-90" onclick="getMyTracks()">🎵 Get Latest Tracks</button>
   </div>
   <div id="searchSection" style="display: none; margin-top: 20px;">
-    <input type="text" id="searchInput" placeholder="Search for a track..." style="padding: 10px; width: 60%; border-radius: 6px; border: 1px solid #ccc;">
-    <button onclick="searchTrack()" class="recommend">🔍 Search</button>
+    <input type="text" id="searchInput" placeholder="Search for a track... to get recommendations" style="padding: 10px; width: 60%; border-radius: 6px; border: 1px solid #ccc;">
+    <button onclick="recommendsearch()" class="recommend">🤖 Get Hindi TF-IDF Recommendations</button>
+    <button onclick="searchmusic()" class="recommend">🔍 Search</button>
+    <button onclick="getlyricbert()" class="recommend">🔍 Get Lyrics Bert Recommendations</button>
+    <button onclick="getlyrictfidf()" class="recommend">🤖 Get Lyrics TF-IDF Recommendations</button>
   </div>
   <p id="deviceStatus" class="text-sm italic bg-gray-100 px-3 py-2 rounded mb-4">Player status: Not connected</p>
 
@@ -274,14 +277,14 @@
         .catch(err => alert("Error collecting data."));
     }
 
-    async function searchTrack() {
+    async function recommendsearch() {
       const query = document.getElementById('searchInput').value.trim();
       if (!query) {
         alert('Please enter a search query');
         return;
       }
     
-      const response = await fetch(`${backend}/search`, {
+      const response = await fetch(`${backend}/recommendsearch`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -348,11 +351,235 @@
         alert('Failed to search tracks');
       }
     }
+    async function searchmusic() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) {
+        alert('Please enter a search query');
+        return;
+      }
     
-    function getRecommendations() {
+      const response = await fetch(`${backend}/search_music`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query,
+          token: token,
+        }),
+      });
+    
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Search results:', result);
+      
+        const tracks = result.tracks;
+      
+        const recDiv = document.getElementById('recommendations');
+        if (tracks.length === 0) {
+          recDiv.innerHTML = '<h3>No results found.</h3>';
+          return;
+        }
+      // Function to remove brackets and content inside them
+      const cleanTrackName = (name) => {
+        return name.replace(/\s*\([^)]*\)/g, '').trim();
+      };
+        // Properly wrap list items in a <ul>
+        recDiv.innerHTML = `
+          <h3>Search Results:</h3>
+          <ul>
+            ${tracks.map(track => {
+              const trackId = track.id;
+              const cleanName = cleanTrackName(track.name);
+              const trackUri = track.uri || `spotify:track:${trackId}`;
+              return `
+                <li data-track-id="${trackId}">
+                  <div class="track-container">
+                    <div class="track-info">
+                      <div class="track-title">${cleanName}</div>
+                      <div class="track-artist">${track.artist}</div>
+                    </div>
+                    <button class="play" onclick="toggleInlinePlayer('${trackId}', '${trackUri}', '${cleanName}', '${track.artist}')">▶️ Play</button>
+                  </div>
+                  <div id="player-${trackId}" class="inline-player">
+                    <div class="inline-player-buttons">
+                      <button onclick="playTrack('${trackUri}', '${cleanName}', '${track.artist}', '${trackId}')">⏯️</button>
+                      <button onclick="stopTrack('${trackId}')">⏹️</button>
+                    </div>
+                    <div class="inline-progress-container">
+                      <div class="inline-progress-bar">
+                        <div id="inline-progress-${trackId}" class="inline-progress"></div>
+                      </div>
+                      <div class="inline-time-info">
+                        <span id="inline-current-${trackId}">0:00</span>
+                        <span id="inline-duration-${trackId}">0:00</span>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              `;
+            }).join('')}
+          </ul>
+        `;
+      } else {
+        alert('Failed to search tracks');
+      }
+    }
+
+    async function getlyricbert() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) {
+        alert('Please enter a search query for lyric bert recommendation');
+        return;
+      }
+    
+      const response = await fetch(`${backend}/getlyricbert`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query,
+          token: token,
+        }),
+      });
+    
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Search results:', result);
+      
+        const tracks = result.tracks;
+      
+        const recDiv = document.getElementById('recommendations');
+        if (tracks.length === 0) {
+          recDiv.innerHTML = '<h3>No results found.</h3>';
+          return;
+        }
+      // Function to remove brackets and content inside them
+      const cleanTrackName = (name) => {
+        return name.replace(/\s*\([^)]*\)/g, '').trim();
+      };
+        // Properly wrap list items in a <ul>
+        recDiv.innerHTML = `
+          <h3>Search Results:</h3>
+          <ul>
+            ${tracks.map(track => {
+              const trackId = track.id;
+              const cleanName = cleanTrackName(track.name);
+              const trackUri = track.uri || `spotify:track:${trackId}`;
+              return `
+                <li data-track-id="${trackId}">
+                  <div class="track-container">
+                    <div class="track-info">
+                      <div class="track-title">${cleanName}</div>
+                      <div class="track-artist">${track.artist}</div>
+                    </div>
+                    <button class="play" onclick="toggleInlinePlayer('${trackId}', '${trackUri}', '${cleanName}', '${track.artist}')">▶️ Play</button>
+                  </div>
+                  <div id="player-${trackId}" class="inline-player">
+                    <div class="inline-player-buttons">
+                      <button onclick="playTrack('${trackUri}', '${cleanName}', '${track.artist}', '${trackId}')">⏯️</button>
+                      <button onclick="stopTrack('${trackId}')">⏹️</button>
+                    </div>
+                    <div class="inline-progress-container">
+                      <div class="inline-progress-bar">
+                        <div id="inline-progress-${trackId}" class="inline-progress"></div>
+                      </div>
+                      <div class="inline-time-info">
+                        <span id="inline-current-${trackId}">0:00</span>
+                        <span id="inline-duration-${trackId}">0:00</span>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              `;
+            }).join('')}
+          </ul>
+        `;
+      } else {
+        alert('Failed to search tracks');
+      }
+    }
+
+    async function getlyrictfidf() {
+      const query = document.getElementById('searchInput').value.trim();
+      if (!query) {
+        alert('Please enter a search query for lyric TF-IDF recommendation');
+        return;
+      }
+    
+      const response = await fetch(`${backend}/getlyrictfidf`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          query: query,
+          token: token,
+        }),
+      });
+    
+      if (response.ok) {
+        const result = await response.json();
+        console.log('Search results:', result);
+      
+        const tracks = result.tracks;
+      
+        const recDiv = document.getElementById('recommendations');
+        if (tracks.length === 0) {
+          recDiv.innerHTML = '<h3>No results found.</h3>';
+          return;
+        }
+      // Function to remove brackets and content inside them
+      const cleanTrackName = (name) => {
+        return name.replace(/\s*\([^)]*\)/g, '').trim();
+      };
+        // Properly wrap list items in a <ul>
+        recDiv.innerHTML = `
+          <h3>Search Results:</h3>
+          <ul>
+            ${tracks.map(track => {
+              const trackId = track.id;
+              const cleanName = cleanTrackName(track.name);
+              const trackUri = track.uri || `spotify:track:${trackId}`;
+              return `
+                <li data-track-id="${trackId}">
+                  <div class="track-container">
+                    <div class="track-info">
+                      <div class="track-title">${cleanName}</div>
+                      <div class="track-artist">${track.artist}</div>
+                    </div>
+                    <button class="play" onclick="toggleInlinePlayer('${trackId}', '${trackUri}', '${cleanName}', '${track.artist}')">▶️ Play</button>
+                  </div>
+                  <div id="player-${trackId}" class="inline-player">
+                    <div class="inline-player-buttons">
+                      <button onclick="playTrack('${trackUri}', '${cleanName}', '${track.artist}', '${trackId}')">⏯️</button>
+                      <button onclick="stopTrack('${trackId}')">⏹️</button>
+                    </div>
+                    <div class="inline-progress-container">
+                      <div class="inline-progress-bar">
+                        <div id="inline-progress-${trackId}" class="inline-progress"></div>
+                      </div>
+                      <div class="inline-time-info">
+                        <span id="inline-current-${trackId}">0:00</span>
+                        <span id="inline-duration-${trackId}">0:00</span>
+                      </div>
+                    </div>
+                  </div>
+                </li>
+              `;
+            }).join('')}
+          </ul>
+        `;
+      } else {
+        alert('Failed to search tracks');
+      }
+    }
+
+    function getMyTracks() {
       if (!user_id || !token) return alert("Missing login credentials!");
 
-      fetch(`${backend}/recommendations`, {
+      fetch(`${backend}/getMyTracks`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'

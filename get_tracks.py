@@ -22,7 +22,7 @@ def get_user_top_tracks(token):
     }
     params = {
         'time_range': 'medium_term',  # Can be 'short_term', 'medium_term', or 'long_term'
-        'limit': 10,                  # Number of items to return
+        'limit': 50,                  # Number of items to return
         'offset': 10                  # Offset to use for pagination
     }
     

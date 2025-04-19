@@ -10,6 +10,8 @@ from urllib.parse import urlencode
 from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response
 import uuid
 import logging
+import joblib
+import numpy as np
 import requests
 from flask import jsonify, request ,send_from_directory
 from flask import Flask
@@ -18,6 +20,18 @@ from get_tracks import get_followed_artists
 import csv
 from datetime import datetime
 import re
+from bs4 import BeautifulSoup
+import threading
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.feature_extraction.text import TfidfVectorizer
+import nltk
+from nltk.corpus import stopwords
+from sentence_transformers import SentenceTransformer
+from nltk.corpus import stopwords
+import random
+
+from config import *
+# import lyricsgenius
   # Enable CORS for all routes
 
 
@@ -34,6 +48,18 @@ CORS(app)
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+
+nltk.download('stopwords')
+STOP_WORDS = set(stopwords.words('english'))
+
+LYRICS_DIR = 'lyrics'
+SAVE_DIR = 'saved_models'
+os.makedirs(SAVE_DIR, exist_ok=True)
+
+TFIDF_VECTORIZER_PATH = os.path.join(SAVE_DIR, 'tfidf_vectorizer.pkl')
+TFIDF_MATRIX_PATH = os.path.join(SAVE_DIR, 'tfidf_matrix.pkl')
+BERT_MODEL_PATH = os.path.join(SAVE_DIR, 'bert_model')
+BERT_EMBEDDINGS_PATH = os.path.join(SAVE_DIR, 'bert_embeddings.npy')
 # Spotify API 
 
 # CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
@@ -68,7 +94,7 @@ def get_recommendation(title, cosine_sim=cosine_sim, df=df):
 # In-memory store for user data
 user_tokens = {}
 user_listening_data = {}
-
+    
 @app.route('/')
 def index():
     return render_template('index2.html')
@@ -205,8 +231,8 @@ def collect_user_data():
     logger.info(f"Collected {len(track_features)} tracks for user_id: {user_id}")
     return 'Data collected'
 
-@app.route('/recommendations', methods=['POST'])
-def getRecommendations():
+@app.route('/getMyTracks', methods=['POST'])
+def getMyTracks():
     data = request.get_json()
     user_id = data.get('user_id')
     token = data.get('access_token')
@@ -233,97 +259,13 @@ def getRecommendations():
         }
         for track in track_data
     ]
-    # if not data:
-    #     logger.warning(f"No listening data found for user_id: {user_id}")
-    #     return jsonify({'recommended_tracks': []})
-    
-    # # Get the token for authorization
-    # token = user_tokens.get(user_id)
-    # if not token:
-    #     logger.warning(f"No token found for user_id: {user_id}")
-    #     return jsonify({'recommended_tracks': []})
-    
-    # headers = {'Authorization': f'Bearer {token}'}
-    # logger.info(f"Token retrieved for user_id: {user_id}")
-
-    # # Collect track IDs (only those that have an 'id' field)
-    # track_ids = [track['id'] for track in data if track.get('id')]
-    # if not track_ids:
-    #     logger.warning(f"No valid track IDs found for user_id: {user_id}")
-    #     return jsonify({'recommended_tracks': []})
-
-    # logger.info(f"Found {len(track_ids)} track IDs for user_id: {user_id}")
-
-    # # Fetch audio features in chunks of 100 (Spotify's limit)
-    # all_features = []
-    # for i in range(0, len(track_ids), 100):
-    #     chunk = track_ids[i:i+100]
-        
-    #     # Make the request to fetch the audio features
-    #     logger.info(f"Fetching audio features for chunk: {chunk}")
-    #     features_resp = requests.get(
-    #         'https://api.spotify.com/v1/audio-features',
-    #         headers=headers,
-    #         params={'ids': ','.join(chunk)}
-    #     )
-        
-    #     # Check if the API response is successful
-    #     if features_resp.status_code != 200:
-    #         logger.error(f"Failed to fetch audio features for chunk: {chunk}, Status code: {features_resp.status_code}")
-    #         return jsonify({'recommended_tracks': []})
-        
-    #     features_data = features_resp.json().get('audio_features', [])
-    #     logger.info(f"Fetched {len(features_data)} audio features for chunk: {chunk}")
-    #     all_features.extend([f for f in features_data if f])
-
-    # # Helper function to calculate the average of a given key from the features
-    # def avg(key):
-    #     values = [f[key] for f in all_features if f and key in f and f[key] is not None]
-    #     return sum(values) / len(values) if values else None
-
-    # # Calculate the averages for energy, valence, and danceability
-    # target_energy = avg('energy')
-    # target_valence = avg('valence')
-    # target_danceability = avg('danceability')
-
-    # # Log the calculated averages
-    # logger.info(f"Calculated averages -> Energy: {target_energy}, Valence: {target_valence}, Danceability: {target_danceability}")
-
-    # # Fallback if any of the averages are missing
-    # if None in (target_energy, target_valence, target_danceability):
-    #     logger.warning(f"Missing average values for energy, valence, or danceability. Returning empty recommendations.")
-    #     return jsonify({'recommended_tracks': []})
-
-    # # Request recommendations based on the user's preferences
-    # logger.info("Requesting Spotify recommendations based on the user's listening data and audio features.")
-    # rec_res = requests.get('https://api.spotify.com/v1/recommendations', headers=headers, params={
-    #     'limit': 10,
-    #     'seed_tracks': ','.join(track_ids[:5]),  # Using top 5 tracks as seeds
-    #     'target_energy': target_energy,
-    #     'target_valence': target_valence,
-    #     'target_danceability': target_danceability,
-    # })
-
-    # # Check if the recommendation API response is successful
-    # if rec_res.status_code != 200:
-    #     logger.error(f"Failed to fetch recommendations, Status code: {rec_res.status_code}")
-    #     return jsonify({'recommended_tracks': []})
-
-    # tracks = rec_res.json().get('tracks', [])
-    # logger.info(f"Fetched {len(tracks)} recommended tracks from Spotify.")
-
-    # # Filter out tracks that do not have a preview URL
-    # track_data = [{
-    #     'id': track['id'],
-    #     'name': track['name'],
-    #     'preview_url': track.get('preview_url')
-    # } for track in tracks if track.get('preview_url')]
-
+    random.shuffle(filtered_tracks)
+    random_15_tracks = random.sample(filtered_tracks, 15)
     logger.info(f"Returning {len(filtered_tracks)} recommended tracks with preview URLs.")
     
-    logger.info(f"Returning Full Track List {filtered_tracks} recommended tracks with preview URLs.")
+    logger.info(f"Returning Full Track List {random_15_tracks} recommended tracks with preview URLs.")
 
-    return jsonify({'recommended_tracks': filtered_tracks})
+    return jsonify({'recommended_tracks': random_15_tracks})
 
 @app.route('/recommend', methods=['GET'])
 def recommend():
@@ -365,8 +307,8 @@ def remove_brackets(text):
     return re.sub(r'\s*\([^)]*\)', '', text).strip()
 
 
-@app.route('/search', methods=['POST'])
-def search():
+@app.route('/recommendsearch', methods=['POST'])
+def recommendsearch():
     data = request.get_json()
     access_token = data.get('token')
     track_name = data.get('query')
@@ -405,6 +347,261 @@ def search():
     # get_track_details(track_ids,access_token)
     return jsonify({'tracks': tracks})
 
+@app.route('/search_music', methods=['POST'])
+def search_music():
+    
+    data = request.get_json()
+    access_token = data.get('token')
+    track_name = data.get('query')
+    print(access_token)
+    print(track_name)
+    url = "https://api.spotify.com/v1/search"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    params = {
+        "q": track_name,
+        "type": "track",
+        "limit": 15
+    }
+    tracks = []
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        return {}
+    if response.status_code == 200:
+            results = response.json()
+            for item in results['tracks']['items']:
+                tracks.append({
+                'id': item['id'],
+                'name': item['name'],
+                'artist': ', '.join([a['name'] for a in item['artists']]),
+                'url': item['external_urls']['spotify']
+            })
+
+    track_names = [track['name'] for track in tracks]
+    artist_names = [track['artist'] for track in tracks]
+    print(track_names)
+    print(artist_names)
+    
+    # Start background thread for lyrics fetching
+    thread = threading.Thread(target=background_lyrics_fetch, args=(track_names, artist_names))
+    thread.start()
+    
+    # for name, artist in zip(track_names, artist_names):
+    #     print(f"Track: {name} | Artist: {artist}")
+    #     get_lyrics_from_lyricsmint(remove_brackets(name),remove_brackets(artist))
+            
+    return jsonify({'tracks': tracks})
+
+
+def preprocess(text):
+    text = text.lower()
+    text = re.sub(r'\[.*?\]', '', text)
+    text = re.sub(r'[^\w\s]', '', text)
+    text = re.sub(r'\d+', '', text)
+    words = text.split()
+    words = [w for w in words if w not in STOP_WORDS]
+    return ' '.join(words)
+
+def load_lyrics():
+    data = []
+    for filename in os.listdir(LYRICS_DIR):
+        if filename.endswith('.txt'):
+            path = os.path.join(LYRICS_DIR, filename)
+            with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                raw_lyrics = f.read()
+                cleaned_lyrics = preprocess(raw_lyrics)
+
+                filename_no_ext = filename[:-4]  # Remove ".txt"
+                title = filename_no_ext.split('_')[0].strip()  # Extract before '_'
+
+                data.append({
+                    'title': title,
+                    'lyrics': cleaned_lyrics
+                })
+    return pd.DataFrame(data)
+
+ldf = load_lyrics()
+print(f"Loaded {len(ldf)} songs.")
+
+# ================================
+# 1. TF-IDF Saving and Loading
+# ================================
+if os.path.exists(TFIDF_VECTORIZER_PATH) and os.path.exists(TFIDF_MATRIX_PATH):
+    print("Loading saved TF-IDF vectorizer and matrix...")
+    tfidf_vectorizer = joblib.load(TFIDF_VECTORIZER_PATH)
+    tfidf_matrix = joblib.load(TFIDF_MATRIX_PATH)
+else:
+    print("Fitting and saving TF-IDF vectorizer and matrix...")
+    tfidf_vectorizer = TfidfVectorizer()
+    tfidf_matrix = tfidf_vectorizer.fit_transform(ldf['lyrics'])
+    joblib.dump(tfidf_vectorizer, TFIDF_VECTORIZER_PATH)
+    joblib.dump(tfidf_matrix, TFIDF_MATRIX_PATH)
+
+def recommend_tfidf(query_title_artist,access_token, top_n=5):
+    idx = ldf[ldf['title'] == query_title_artist].index[0]
+    query_vec = tfidf_matrix[idx]
+    cosine_sim = cosine_similarity(query_vec, tfidf_matrix).flatten()
+    similar_indices = cosine_sim.argsort()[::-1][1:top_n+1]
+    print(f"\nTF-IDF Recommendations for: {query_title_artist}")
+    for i in similar_indices:
+        print(f"- {ldf.iloc[i]['title']}")
+    results = []
+    for i in similar_indices:
+        title_artist = ldf.iloc[i]['title']
+        title = title_artist.split('-')[0].strip()  # adjust if format differs
+        track_info = search_track(title,access_token)
+        if track_info:
+            results.append(track_info)
+    
+    return results    
+
+# ================================
+# 2. BERT Saving and Loading
+# ================================
+def load_or_download_bert_model():
+    if os.path.exists(BERT_MODEL_PATH):
+        print(f"Loading BERT model from {BERT_MODEL_PATH}")
+        return SentenceTransformer(BERT_MODEL_PATH)
+    else:
+        print("Downloading BERT model from Hugging Face...")
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        print(f"Saving BERT model to {BERT_MODEL_PATH}")
+        model.save(BERT_MODEL_PATH)
+        return model
+
+bert_model = load_or_download_bert_model()
+valid_df = ldf[ldf['lyrics'].str.strip().astype(bool)].copy()
+if os.path.exists(BERT_EMBEDDINGS_PATH):
+    print("Loading BERT embeddings from file...")
+    bert_embeddings = np.load(BERT_EMBEDDINGS_PATH)
+    if len(bert_embeddings) != len(valid_df):
+        print("Mismatch found! Regenerating BERT embeddings...")
+        bert_embeddings = bert_model.encode(valid_df['lyrics'].tolist(), show_progress_bar=True)
+        np.save(BERT_EMBEDDINGS_PATH, bert_embeddings)
+else:
+    print("Generating BERT embeddings...")
+ 
+    bert_embeddings = bert_model.encode(valid_df['lyrics'].tolist(), show_progress_bar=True)
+    if len(bert_embeddings) != len(valid_df):
+        raise ValueError("Mismatch between embeddings and valid lyrics!")
+    
+    np.save(BERT_EMBEDDINGS_PATH, bert_embeddings)
+
+# df['bert_vec'] = list(bert_embeddings)
+valid_df['bert_vec'] = list(bert_embeddings)
+ldf = ldf.merge(valid_df[['title', 'bert_vec']], on='title', how='left')
+
+def recommend_bert(query_title_artist,access_token, top_n=5):
+    print("query_title_artist")
+    print(query_title_artist)
+    query_idx = ldf[ldf['title'] == query_title_artist].index[0]
+    query_vec = ldf.iloc[query_idx]['bert_vec']
+    cosine_sim = cosine_similarity([query_vec], bert_embeddings).flatten()
+    similar_indices = cosine_sim.argsort()[::-1][1:top_n+1]
+    print(f"\nBERT Recommendations for: {query_title_artist}")
+    for i in similar_indices:
+        print(f"- {ldf.iloc[i]['title']}")
+    
+    results = []
+    for i in similar_indices:
+        title_artist = ldf.iloc[i]['title']
+        title = title_artist.split('-')[0].strip()  # adjust if format differs
+        track_info = search_track(title,access_token)
+        if track_info:
+            results.append(track_info)
+    
+    return results
+
+@app.route('/getlyricbert', methods=['POST'])
+def getlyricbert():
+    
+    data = request.get_json()
+    access_token = data.get('token')
+    track_name = data.get('query')
+    print(access_token)
+    print(track_name)
+    url = "https://api.spotify.com/v1/search"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    params = {
+        "q": track_name,
+        "type": "track",
+        "limit": 15
+    }
+    tracks = []
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        return {}
+    if response.status_code == 200:
+            results = response.json()
+            for item in results['tracks']['items']:
+                tracks.append({
+                'id': item['id'],
+                'name': item['name'],
+                'artist': ', '.join([a['name'] for a in item['artists']]),
+                'url': item['external_urls']['spotify']
+            })
+    track_names = [track['name'] for track in tracks]
+    artist_names = [track['artist'] for track in tracks]
+    print(track_names)
+    print(artist_names)
+    
+    name=track_names[0]
+    
+    # for name, artist in zip(track_names, artist_names):
+    #     print(f"Track: {name} | Artist: {artist}")
+    #     get_lyrics_from_lyricsmint(remove_brackets(name),remove_brackets(artist))
+    recommendations = recommend_bert(name,access_token)
+        
+    return jsonify({'tracks': recommendations})
+
+@app.route('/getlyrictfidf', methods=['POST'])
+def getlyrictfidf():
+    
+    data = request.get_json()
+    access_token = data.get('token')
+    track_name = data.get('query')
+    print(access_token)
+    print(track_name)
+    url = "https://api.spotify.com/v1/search"
+    headers = {
+        "Authorization": f"Bearer {access_token}"
+    }
+    params = {
+        "q": track_name,
+        "type": "track",
+        "limit": 15
+    }
+    tracks = []
+    response = requests.get(url, headers=headers, params=params)
+    if response.status_code != 200:
+        return {}
+    if response.status_code == 200:
+            results = response.json()
+            for item in results['tracks']['items']:
+                tracks.append({
+                'id': item['id'],
+                'name': item['name'],
+                'artist': ', '.join([a['name'] for a in item['artists']]),
+                'url': item['external_urls']['spotify']
+            })
+    track_names = [track['name'] for track in tracks]
+    artist_names = [track['artist'] for track in tracks]
+    print(track_names)
+    print(artist_names)
+    
+    name=track_names[0]
+    
+    # for name, artist in zip(track_names, artist_names):
+    #     print(f"Track: {name} | Artist: {artist}")
+    #     get_lyrics_from_lyricsmint(remove_brackets(name),remove_brackets(artist))
+    recommendations = recommend_tfidf(name,access_token)
+        
+    return jsonify({'tracks': recommendations})
+
+
 def search_track(track_name, access_token):
     url = "https://api.spotify.com/v1/search"
     headers = {
@@ -413,7 +610,7 @@ def search_track(track_name, access_token):
     params = {
         "q": track_name,
         "type": "track",
-        "limit": 5
+        "limit": 1
     }
 
     response = requests.get(url, headers=headers, params=params)
@@ -575,6 +772,90 @@ def get_track_details(tracks,access_token):
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
+
+# genius = lyricsgenius.Genius("6bNCRnPv7-4rObaDvDepck6YRv8v_uyTNQzBpLD5ZCzOGfEtKFa_eBW2kSqlWFxj")
+
+# def get_lyrics(track_name, artist_name):
+#     try:
+#         song = genius.search_song(track_name, artist_name)
+#         return song.lyrics if song else None
+#     except:
+#         return None
+
+# lyrics = get_lyrics("Shape of You", "Ed Sheeran")
+# print(lyrics[:500])
+
+def get_lyrics_from_lyricsmint(track_name, artist_name):
+    # Step 1: Prepare the search URL
+    query = f"{track_name} {artist_name}".replace(" ", "+")
+    search_url = f"https://www.lyricsmint.com/search/{query}"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0"
+    }
+
+    # Step 2: Fetch the search results
+    response = requests.get(search_url, headers=headers)
+    if response.status_code != 200:
+        print("Failed to load search page")
+        return None
+    
+    print("##########################################")
+    print(response.text)
+    soup = BeautifulSoup(response.text, "html.parser")
+
+    # Step 3: Find the first song result
+    song_link_tag = soup.find("a", class_="song h-auto w-full block text-black no-underline song")
+    if not song_link_tag:
+        print("No song link found")
+        return None
+
+    relative_link = song_link_tag.get("href")
+    if not relative_link:
+        print("No href in song link")
+        return None
+    print("@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@")
+    print(relative_link)
+    lyrics_url = f"https://www.lyricsmint.com{relative_link}"
+
+    # Step 4: Fetch lyrics page
+    lyrics_response = requests.get(lyrics_url, headers=headers)
+    if lyrics_response.status_code != 200:
+        print("Failed to load lyrics page")
+        return None
+    print("$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$")
+    print(lyrics_response.text)
+    lyrics_soup = BeautifulSoup(lyrics_response.text, "html.parser")
+
+    # Step 5: Locate the lyrics div
+    lyrics_div = lyrics_soup.find("div", class_="text-base lg:text-lg pb-2 text-center md:text-left")
+    if not lyrics_div:
+        print("Lyrics div not found")
+        return None
+    # lyrics_div_hindi = lyrics_soup.find("div", class_="text-base lg:text-lg pb-2 text-center md:text-left")
+    # if not lyrics_div:
+    #     print("Lyrics div not found")
+    #     return None
+    
+    # Step 6: Extract and clean lyrics
+    lyrics = ""
+    for p in lyrics_div.find_all("p"):
+        paragraph = p.get_text(separator="\n")
+        lyrics += paragraph.strip() + "\n\n"
+        print(lyrics.strip())
+    
+    os.makedirs("lyrics", exist_ok=True)
+    # Define the full file path
+    file_path = os.path.join("lyrics", f"{track_name}_{artist_name}.txt")   
+    with open(file_path, "w", encoding="utf-8") as f:
+        f.write(lyrics.strip())
+    
+    return lyrics.strip()
+
+def background_lyrics_fetch(track_names, artist_names):
+    for name, artist in zip(track_names, artist_names):
+        print(f"Track: {name} | Artist: {artist}")
+        get_lyrics_from_lyricsmint(remove_brackets(name), remove_brackets(artist))
 
 
 if __name__ == '__main__':
