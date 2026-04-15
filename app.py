@@ -6,8 +6,9 @@ import requests
 import pickle
 import pandas as pd
 from urllib.parse import urlencode
+from urllib.parse import urlparse, urlunparse
 # from flask import Flask, request, redirect, jsonify, render_template_string
-from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response
+from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response, has_request_context
 import uuid
 import logging
 import joblib
@@ -64,9 +65,9 @@ BERT_EMBEDDINGS_PATH = os.path.join(SAVE_DIR, 'bert_embeddings.npy')
 
 # CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID')
 # CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET')
-CLIENT_ID = "1b51b0e34b4a4da2a78dd5bd9d1d7e02"
-CLIENT_SECRET = "3450c693ec4541e980faa7bac14844c7"
-REDIRECT_URI = 'http://127.0.0.1:5000/callback'
+CLIENT_ID = os.getenv('SPOTIFY_CLIENT_ID', "1b51b0e34b4a4da2a78dd5bd9d1d7e02")
+CLIENT_SECRET = os.getenv('SPOTIFY_CLIENT_SECRET', "3450c693ec4541e980faa7bac14844c7")
+SPOTIFY_REDIRECT_URI = os.getenv('SPOTIFY_REDIRECT_URI')
 SCOPE = 'user-top-read user-modify-playback-state streaming user-read-email user-read-private user-follow-read'
 
 with open('music_recommender.pkl', 'rb') as f:
@@ -94,6 +95,47 @@ def get_recommendation(title, cosine_sim=cosine_sim, df=df):
 # In-memory store for user data
 user_tokens = {}
 user_listening_data = {}
+
+def normalize_callback_uri(callback_uri):
+    """
+    Normalize callback URI to an absolute HTTPS URL.
+    Accepts values with or without scheme, e.g.:
+    - https://localhost:5000/callback
+    - localhost:5000/callback
+    """
+    uri = (callback_uri or '').strip()
+    if not uri:
+        raise ValueError("Empty callback URI")
+
+    if '://' not in uri:
+        uri = f"https://{uri.lstrip('/')}"
+
+    parsed = urlparse(uri)
+    if not parsed.netloc:
+        raise ValueError(f"Invalid callback URI (missing host): {callback_uri}")
+
+    path = parsed.path or '/callback'
+    normalized = urlunparse(('https', parsed.netloc, path, '', '', ''))
+    return normalized
+
+def get_redirect_uri():
+    """Return the callback URL used for Spotify OAuth."""
+    if SPOTIFY_REDIRECT_URI:
+        try:
+            return normalize_callback_uri(SPOTIFY_REDIRECT_URI)
+        except ValueError:
+            logger.warning("Invalid SPOTIFY_REDIRECT_URI value, falling back to request host.")
+
+    if has_request_context():
+        forwarded_proto = request.headers.get('X-Forwarded-Proto', '').split(',')[0].strip()
+        scheme = forwarded_proto or request.scheme or 'https'
+        callback_uri = f"{scheme}://{request.host}/callback"
+        normalized = normalize_callback_uri(callback_uri)
+        if normalized != callback_uri:
+            logger.warning("Converted callback URI to HTTPS: %s", normalized)
+        return normalized
+
+    return 'https://127.0.0.1:5000/callback'
     
 @app.route('/')
 def index():
@@ -116,11 +158,13 @@ def signup():
     user_id = email  # Using email as user_id for simplicity
     logger.info(f"Registered new user: {name} ({email})")
 
+    redirect_uri = get_redirect_uri()
+
     # Redirect user to Spotify login with user_id
     params = urlencode({
         'client_id': CLIENT_ID,
         'response_type': 'code',
-        'redirect_uri': REDIRECT_URI,
+        'redirect_uri': redirect_uri,
         'scope': SCOPE,
         'state': user_id,  # Pass our app's user_id via state
     })
@@ -139,11 +183,13 @@ def login():
     # Save the user_id temporarily (you can also store it in a session or database)
     user_tokens[user_id] = None  # Initialize user entry
     
+    redirect_uri = get_redirect_uri()
+
     # Prepare the authorization URL with the user_id in the state
     params = urlencode({
         'client_id': CLIENT_ID,
         'response_type': 'code',
-        'redirect_uri': REDIRECT_URI,
+        'redirect_uri': redirect_uri,
         'scope': SCOPE,
         'state': user_id  # Pass the user_id as state
     })
@@ -159,6 +205,8 @@ def callback():
         logger.warning("Callback received with no code or state")
         return 'No code or state provided', 400
 
+    redirect_uri = get_redirect_uri()
+
     logger.info(f"Received code and state: {state}, requesting access token")
     
     # Retrieve the stored user_id and ensure it matches the state
@@ -170,7 +218,7 @@ def callback():
     response = requests.post('https://accounts.spotify.com/api/token', data={
         'grant_type': 'authorization_code',
         'code': code,
-        'redirect_uri': REDIRECT_URI,
+        'redirect_uri': redirect_uri,
         'client_id': CLIENT_ID,
         'client_secret': CLIENT_SECRET
     })
@@ -860,4 +908,4 @@ def background_lyrics_fetch(track_names, artist_names):
 
 if __name__ == '__main__':
     logger.info("Starting Flask server...")
-    app.run(debug=True)
+    app.run(debug=True, ssl_context='adhoc')
