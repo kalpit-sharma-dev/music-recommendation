@@ -6,6 +6,7 @@ import requests
 import pickle
 import pandas as pd
 from urllib.parse import urlencode
+from urllib.parse import urlparse, urlunparse
 # from flask import Flask, request, redirect, jsonify, render_template_string
 from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response, has_request_context
 import uuid
@@ -98,10 +99,19 @@ user_listening_data = {}
 def get_redirect_uri():
     """Return the callback URL used for Spotify OAuth."""
     if SPOTIFY_REDIRECT_URI:
-        return SPOTIFY_REDIRECT_URI.strip()
-    if has_request_context():
-        return f"{request.host_url.rstrip('/')}/callback"
-    return 'http://127.0.0.1:5000/callback'
+        callback_uri = SPOTIFY_REDIRECT_URI.strip()
+    elif has_request_context():
+        forwarded_proto = request.headers.get('X-Forwarded-Proto', '').split(',')[0].strip()
+        scheme = forwarded_proto or request.scheme or 'https'
+        callback_uri = f"{scheme}://{request.host}/callback"
+    else:
+        callback_uri = 'https://127.0.0.1:5000/callback'
+
+    parsed = urlparse(callback_uri)
+    if parsed.scheme != 'https':
+        callback_uri = urlunparse(parsed._replace(scheme='https'))
+        logger.warning("Converted callback URI to HTTPS: %s", callback_uri)
+    return callback_uri
     
 @app.route('/')
 def index():
@@ -874,4 +884,4 @@ def background_lyrics_fetch(track_names, artist_names):
 
 if __name__ == '__main__':
     logger.info("Starting Flask server...")
-    app.run(debug=True)
+    app.run(debug=True, ssl_context='adhoc')
