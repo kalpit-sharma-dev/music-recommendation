@@ -96,22 +96,46 @@ def get_recommendation(title, cosine_sim=cosine_sim, df=df):
 user_tokens = {}
 user_listening_data = {}
 
+def normalize_callback_uri(callback_uri):
+    """
+    Normalize callback URI to an absolute HTTPS URL.
+    Accepts values with or without scheme, e.g.:
+    - https://localhost:5000/callback
+    - localhost:5000/callback
+    """
+    uri = (callback_uri or '').strip()
+    if not uri:
+        raise ValueError("Empty callback URI")
+
+    if '://' not in uri:
+        uri = f"https://{uri.lstrip('/')}"
+
+    parsed = urlparse(uri)
+    if not parsed.netloc:
+        raise ValueError(f"Invalid callback URI (missing host): {callback_uri}")
+
+    path = parsed.path or '/callback'
+    normalized = urlunparse(('https', parsed.netloc, path, '', '', ''))
+    return normalized
+
 def get_redirect_uri():
     """Return the callback URL used for Spotify OAuth."""
     if SPOTIFY_REDIRECT_URI:
-        callback_uri = SPOTIFY_REDIRECT_URI.strip()
-    elif has_request_context():
+        try:
+            return normalize_callback_uri(SPOTIFY_REDIRECT_URI)
+        except ValueError:
+            logger.warning("Invalid SPOTIFY_REDIRECT_URI value, falling back to request host.")
+
+    if has_request_context():
         forwarded_proto = request.headers.get('X-Forwarded-Proto', '').split(',')[0].strip()
         scheme = forwarded_proto or request.scheme or 'https'
         callback_uri = f"{scheme}://{request.host}/callback"
-    else:
-        callback_uri = 'https://127.0.0.1:5000/callback'
+        normalized = normalize_callback_uri(callback_uri)
+        if normalized != callback_uri:
+            logger.warning("Converted callback URI to HTTPS: %s", normalized)
+        return normalized
 
-    parsed = urlparse(callback_uri)
-    if parsed.scheme != 'https':
-        callback_uri = urlunparse(parsed._replace(scheme='https'))
-        logger.warning("Converted callback URI to HTTPS: %s", callback_uri)
-    return callback_uri
+    return 'https://127.0.0.1:5000/callback'
     
 @app.route('/')
 def index():
