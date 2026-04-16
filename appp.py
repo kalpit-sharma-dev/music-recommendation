@@ -4,8 +4,15 @@ import requests
 import pandas as pd
 
 app = Flask(__name__)
-CLIENT_ID = "1b51b0e34b4a4da2a78dd5bd9d1d7e02"
-CLIENT_SECRET = "3450c693ec4541e980faa7bac14844c7"
+CLIENT_ID = "71e0b2d2eea646c1bf113120aff06890"
+
+"d4496c9fed554320b4de9074d480521a"
+
+##"71e0b2d2eea646c1bf113120aff06890"
+
+CLIENT_SECRET = "ceb9479ecdd74042beaff44f033936a6"
+
+##"ceb9479ecdd74042beaff44f033936a6"
 # Load the model and data
 with open('music_recommender.pkl', 'rb') as f:
     data = pickle.load(f)
@@ -92,4 +99,4 @@ def search_spotify_track(track_name, access_token):
     }
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, ssl_context='adhoc')

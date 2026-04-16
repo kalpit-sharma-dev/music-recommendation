@@ -1,0 +1,18 @@
+mongodb+srv://<db_username>:<db_password>@cluster0.5w07zbf.mongodb.net/
+
+m24de3042
+59zW6uos2quoQo9r
+
+
+
+mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/
+
+
+kafka
+
+
+docker stop f2365df2bdd2
+docker rm f2365df2bdd2
+
+
+docker run -d --name kafka -p 9092:9092 -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://localhost:9092 -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 -e KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 apache/kafka:latest

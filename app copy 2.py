@@ -7,7 +7,7 @@ import pickle
 import pandas as pd
 from urllib.parse import urlencode
 # from flask import Flask, request, redirect, jsonify, render_template_string
-from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response, g
+from flask import Flask, request, jsonify ,render_template_string, render_template , redirect, Response
 import uuid
 import logging
 import joblib
@@ -48,116 +48,43 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-class _NoopRedis:
-    def get(self, *_args, **_kwargs):
-        return None
-
-    def setex(self, *_args, **_kwargs):
-        return None
-
-    def delete(self, *_args, **_kwargs):
-        return None
-
-
 # Initialize Big Data Components
 def init_big_data():
-    try:
-        # MongoDB Setup
-        mongo_uri = os.getenv(
-            "MONGO_URI",
-            "mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/",
-        )
-        mongo_client = MongoClient(
-            mongo_uri,
-            tls=True,
-            tlsAllowInvalidCertificates=True,  # Only for testing/development!
-            connectTimeoutMS=30000,
-            socketTimeoutMS=30000,
-        )
-        mongo_client.server_info()
-        db = mongo_client["music_recommender"]
+    # MongoDB Setup
+    # mongo_client = MongoClient(os.getenv('MONGO_URI', 'mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/'))
+    mongo_uri = "mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/"
+    mongo_client = MongoClient(mongo_uri)
+    mongo_client.server_info()
+    db = mongo_client['music_recommender']
+    
+    # Spark Setup
+    spark = SparkSession.builder \
+        .appName("MusicRecommender") \
+        .config("spark.mongodb.input.uri", "mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/music_recommender.tracks") \
+        .config("spark.mongodb.output.uri",  "mongodb+srv://m24de3042:59zW6uos2quoQo9r@cluster0.5w07zbf.mongodb.net/music_recommender.recommendations") \
+        .config("spark.executor.memory", "4g") \
+        .getOrCreate()
+    
+    # Kafka Setup
+    kafka_producer = Producer({
+    'bootstrap.servers': os.getenv('KAFKA_BROKERS', 'localhost:9092'),
+    'message.max.bytes': 10000000  # 10MB message limit
+})
 
-        # Spark Setup
-        spark = (
-            SparkSession.builder.appName("MusicRecommender")
-            .config("spark.mongodb.input.uri", f"{mongo_uri}music_recommender.tracks")
-            .config("spark.mongodb.output.uri", f"{mongo_uri}music_recommender.recommendations")
-            .config("spark.executor.memory", "4g")
-            .getOrCreate()
-        )
-
-        # Kafka Setup
-        kafka_producer = Producer(
-            {
-                "bootstrap.servers": os.getenv("KAFKA_BROKERS", "localhost:9092"),
-                "message.max.bytes": 10000000,  # 10MB message limit
-            }
-        )
-
-        # Redis Setup
-        redis_cache = Redis(
-            host=os.getenv("REDIS_HOST", "localhost"),
-            port=int(os.getenv("REDIS_PORT", 6379)),
-            db=int(os.getenv("REDIS_DB", 0)),
-        )
-        logger.info("Big data services initialized.")
-        return db, spark, kafka_producer, redis_cache
-    except Exception as exc:
-        logger.warning("Big data services unavailable, running in local mode: %s", exc)
-        return None, None, None, _NoopRedis()
+    
+    # Redis Setup
+    redis_cache = Redis(
+        host=os.getenv('REDIS_HOST', 'localhost'),
+        port=int(os.getenv('REDIS_PORT', 6379)),
+        db=int(os.getenv('REDIS_DB', 0)))
+    
+    return db, spark, kafka_producer, redis_cache
 
 # Initialize
 db, spark, kafka_producer, redis_cache = init_big_data()
-BIG_DATA_ENABLED = db is not None and spark is not None and kafka_producer is not None
 
 app = Flask(__name__)
 CORS(app)
-
-# Request/response logging middleware for API tracing.
-@app.before_request
-def log_request_start():
-    g.request_start_time = time.time()
-    request_id = str(uuid.uuid4())[:8]
-    g.request_id = request_id
-
-    query_params = dict(request.args) if request.args else {}
-    payload = None
-    if request.is_json:
-        payload = request.get_json(silent=True)
-
-    # Avoid printing secrets directly in logs.
-    if isinstance(payload, dict):
-        redacted = dict(payload)
-        for key in ("token", "access_token", "refresh_token", "client_secret"):
-            if key in redacted and redacted[key]:
-                redacted[key] = "***redacted***"
-        payload = redacted
-
-    logger.info(
-        "[REQ %s] %s %s | query=%s | payload=%s",
-        request_id,
-        request.method,
-        request.path,
-        query_params,
-        payload,
-    )
-
-
-@app.after_request
-def log_request_end(response):
-    request_id = getattr(g, "request_id", "unknown")
-    started = getattr(g, "request_start_time", None)
-    duration_ms = int((time.time() - started) * 1000) if started else -1
-
-    logger.info(
-        "[RES %s] %s %s -> %s (%dms)",
-        request_id,
-        request.method,
-        request.path,
-        response.status_code,
-        duration_ms,
-    )
-    return response
 
 # NLP Setup
 nltk.download('stopwords')
@@ -172,7 +99,6 @@ with open('music_recommender.pkl', 'rb') as f:
     df = data['df']
 
 with open('tfidf_vectorizer.pkl', 'rb') as f:
-# with open('saved_models/tfidf_vectorizer.pkl', 'rb') as f:
     tfidf = pickle.load(f)
 
 # Kafka Consumer for real-time events
@@ -196,15 +122,12 @@ def start_kafka_consumer():
             break  
     try:
         event = json.loads(msg.value().decode('utf-8'))
-        #TODOProcess event here
+        # Process your event here
     except Exception as e:
         logger.error(f"Error processing message: {e}")
 
 # Start Kafka consumer in background
-if BIG_DATA_ENABLED:
-    threading.Thread(target=start_kafka_consumer, daemon=True).start()
-else:
-    logger.info("Kafka consumer disabled in local mode.")
+threading.Thread(target=start_kafka_consumer, daemon=True).start()
 
 # Spark Recommendation Engine
 class SparkRecommender:
@@ -253,14 +176,14 @@ def hybrid_recommendations(user_id, track_name=None, num_recs=10):
         return pickle.loads(cached)
     
     # Collaborative filtering from Spark
-    cf_recs = spark_recommender.recommend_for_user(user_id, num_recs) if BIG_DATA_ENABLED else []
+    cf_recs = spark_recommender.recommend_for_user(user_id, num_recs)
     
     # Content-based recommendations
     if track_name:
         cb_recs = get_recommendation(track_name).to_dict('records')
     else:
         # Get user's top tracks from Spotify
-        user_data = db.users.find_one({"user_id": user_id}) if db is not None else None
+        user_data = db.users.find_one({"user_id": user_id})
         if user_data and 'access_token' in user_data:
             top_tracks = get_user_top_tracks(user_data['access_token'])
             cb_recs = [{'track_id': t['id'], 'name': t['name']} for t in top_tracks.get('items', [])]
@@ -280,8 +203,6 @@ def hybrid_recommendations(user_id, track_name=None, num_recs=10):
 
 def update_realtime_recommendations(user_id, track_id):
     """Update recommendations based on real-time event"""
-    if not BIG_DATA_ENABLED:
-        return
     # Increment interaction score in MongoDB
     db.user_interactions.update_one(
         {'user_id': user_id, 'track_id': track_id},
@@ -449,11 +370,8 @@ def show_token():
 @app.route('/collect_user_data')
 def collect_user_data():
     user_id = request.args.get('user_id')
-    token = request.args.get('token')
-    # data = request.get_json()
-    # token = data.get('access_token')
     logger.info(f"Collecting user data for user_id: {user_id}")
-    # token = user_tokens.get(user_id)
+    token = user_tokens.get(user_id)
     if not token:
         logger.warning(f"Unauthorized access attempt for user_id: {user_id}")
         return 'Unauthorized', 401
@@ -479,13 +397,12 @@ def collect_user_data():
         'event_type': 'track_played'
     }
     user_listening_data[user_id] = track_features
-    if kafka_producer is not None:
-        kafka_producer.produce(
-            'user-listening-events',
-            key=str(user_id),
-            value=json.dumps(event).encode('utf-8')
-        )
-        kafka_producer.flush()
+    kafka_producer.produce(
+    'user-listening-events',
+    key=str(user_id),
+    value=json.dumps(event).encode('utf-8')
+    )
+    kafka_producer.flush()
     logger.info(f"Collected {len(track_features)} tracks for user_id: {user_id}")
     return 'Data collected'
 
@@ -607,56 +524,40 @@ def recommendsearch():
 
 @app.route('/search_music', methods=['POST'])
 def search_music():
-    data = request.get_json(silent=True) or {}
+    
+    data = request.get_json()
     access_token = data.get('token')
     track_name = data.get('query')
-    user_id = data.get('user_id')
-
-    if not access_token:
-        return jsonify({'error': 'Missing Spotify access token', 'tracks': []}), 401
-    if not track_name:
-        return jsonify({'error': 'Missing query', 'tracks': []}), 400
-
+    print(access_token)
+    print(track_name)
     url = "https://api.spotify.com/v1/search"
     headers = {
         "Authorization": f"Bearer {access_token}"
     }
-    search_limit = int(os.getenv("SPOTIFY_SEARCH_LIMIT", "10"))
-    search_limit = max(1, min(search_limit, 50))
     params = {
         "q": track_name,
         "type": "track",
-        "limit": search_limit
+        "limit": 15
     }
     tracks = []
-    response = requests.get(url, headers=headers, params=params, timeout=20)
+    response = requests.get(url, headers=headers, params=params)
     if response.status_code != 200:
-        logger.warning(
-            "Spotify search failed: status=%s params=%s body=%s",
-            response.status_code,
-            params,
-            response.text[:300],
-        )
-        return jsonify({
-            'error': 'Spotify search failed',
-            'spotify_status': response.status_code,
-            'tracks': []
-        }), 200
-
-    results = response.json()
-    for item in results.get('tracks', {}).get('items', []):
-        tracks.append({
+        return {}
+    if response.status_code == 200:
+            results = response.json()
+            for item in results['tracks']['items']:
+                tracks.append({
                 'id': item['id'],
                 'name': item['name'],
                 'artist': ', '.join([a['name'] for a in item['artists']]),
                 'url': item['external_urls']['spotify']
-        })
+            })
 
     track_names = [track['name'] for track in tracks]
     artist_names = [track['artist'] for track in tracks]
-    logger.info("Spotify search returned %d tracks for query=%s", len(tracks), track_name)
-    if track_names:
-        log_user_interaction(user_id, track_names[0])
+    print(track_names)
+    print(artist_names)
+    
     # Start background thread for lyrics fetching
     thread = threading.Thread(target=background_lyrics_fetch, args=(track_names, artist_names))
     thread.start()
@@ -664,7 +565,7 @@ def search_music():
     # for name, artist in zip(track_names, artist_names):
     #     print(f"Track: {name} | Artist: {artist}")
     #     get_lyrics_from_lyricsmint(remove_brackets(name),remove_brackets(artist))
-       
+            
     return jsonify({'tracks': tracks})
 
 
@@ -1132,36 +1033,6 @@ def background_lyrics_fetch(track_names, artist_names):
         get_lyrics_from_lyricsmint(remove_brackets(name), remove_brackets(artist))
 
 
-def log_user_interaction(user_id, track_id, interaction_type='play'):
-    """Log user interactions with tracks"""
-    try:
-        if db is not None:
-            db.user_interactions.update_one(
-                {'user_id': user_id, 'track_id': track_id},
-                {'$inc': {'count': 1},
-                 '$set': {
-                     'last_interacted': datetime.now(),
-                     'interaction_type': interaction_type
-                 }},
-                upsert=True
-            )
-        
-        # Send to Kafka for real-time processing
-        event = {
-            'user_id': user_id,
-            'track_id': track_id,
-            'timestamp': datetime.now().isoformat(),
-            'event_type': interaction_type
-        }
-        if kafka_producer is not None:
-            kafka_producer.produce(
-                'user-interaction-events',
-                key=str(user_id),
-                value=json.dumps(event).encode('utf-8')
-            )
-    except Exception as e:
-        logger.error(f"Error logging interaction: {str(e)}")
-
 if __name__ == '__main__':
     logger.info("Starting Flask server...")
-    app.run(debug=True)
+    app.run(debug=True, ssl_context='adhoc')

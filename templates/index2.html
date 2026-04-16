@@ -251,7 +251,7 @@
     }
 
     // Main application variables
-    const backend = 'http://localhost:5000';
+    const backend = window.location.origin;
     const token = localStorage.getItem('code');
     const user_id = localStorage.getItem('state');
     let player;
@@ -272,7 +272,7 @@
 
     function collectData() {
       if (!user_id) return alert("Please login first!");
-      fetch(`${backend}/collect_user_data?user_id=${user_id}`)
+      fetch(`${backend}/collect_user_data?user_id=${user_id}&token=${token}`)
         .then(() => alert("Data collected!"))
         .catch(err => alert("Error collecting data."));
     }
@@ -298,10 +298,13 @@
       if (response.ok) {
         const result = await response.json();
         console.log('Search results:', result);
-      
-        const tracks = result.tracks;
-      
+
+        const tracks = Array.isArray(result.tracks) ? result.tracks : [];
         const recDiv = document.getElementById('recommendations');
+        if (result.error) {
+          recDiv.innerHTML = `<h3>Search failed: ${result.error}</h3>`;
+          return;
+        }
         if (tracks.length === 0) {
           recDiv.innerHTML = '<h3>No results found.</h3>';
           return;
@@ -366,6 +369,7 @@
         body: JSON.stringify({
           query: query,
           token: token,
+          user_id:user_id,
         }),
       });
     
